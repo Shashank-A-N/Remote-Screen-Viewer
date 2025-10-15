@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Screen Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .phone-notch { width: 120px; height: 20px; background-color: #1f2937; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+        .qrcode-container { display: flex; justify-content: center; align-items: center; padding: 1rem; background: white; border-radius: 0.5rem; }
+        #peer-qrcode { cursor: pointer; }
+        #peer-qrcode-container.loading #peer-qrcode { display: none; }
+        #peer-qrcode-container.loading::after { content: 'Generating ID...'; color: #9ca3af; }
+        #peer-qrcode:not(:empty) ~ p { display: none; }
+        .spinner { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .hidden { display: none; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- Splash Screen -->
+    <div id="splash-screen" class="w-full max-w-md text-center bg-gray-800 p-8 rounded-2xl shadow-lg">
+        <h1 class="text-2xl font-bold mb-2">Install Host App</h1>
+        <p class="text-gray-400 mb-6">Scan the QR code with the phone you want to control, or manually enter the URL.</p>
+        <div class="space-y-4">
+            <div class="w-full p-4 bg-gray-700 rounded-lg flex flex-col items-center justify-center">
+                <div id="install-qrcode" class="qrcode-container"></div>
+            </div>
+            <div>
+                <label for="installUrl" class="block text-sm font-medium text-gray-300 mb-1">Installation URL</label>
+                <input type="text" id="installUrl" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-gray-400 text-center" readonly value="https://shashank-a-n.github.io/Scan-Phone/">
+            </div>
+            <button id="continue-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-colors">Continue to Controller</button>
+        </div>
+    </div>
+
+    <!-- Main Application -->
+    <div id="main-app" class="w-full max-w-5xl hidden md:flex-row gap-8">
+        <!-- Control Panel -->
+        <div class="bg-gray-800 p-6 rounded-2xl shadow-lg w-full md:w-1/3">
+             <div class="flex justify-between items-center mb-6">
+                 <div>
+                    <h1 class="text-2xl font-bold">Remote Control</h1>
+                    <p class="text-gray-400">Scan the QR code to connect.</p>
+                 </div>
+                 <button id="show-install-info-btn" title="Show Install URL" class="p-2 bg-gray-700 hover:bg-gray-600 rounded-full">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                 </button>
+            </div>
+            <div class="space-y-4">
+                 <div>
+                    <label for="hostUrl" class="block text-sm font-medium text-gray-300 mb-1">Host App URL</label>
+                    <input type="text" id="hostUrl" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white" placeholder="Auto-detecting URL...">
+                </div>
+                <div class="mb-2">
+                    <h2 class="text-lg font-semibold mb-3">Scan to Auto-Connect</h2>
+                    <div id="peer-qrcode-container" class="w-full p-4 bg-gray-700 rounded-lg flex flex-col items-center justify-center loading" style="min-height: 192px;">
+                        <div id="peer-qrcode" class="qrcode-container" title="Click to regenerate QR Code"></div>
+                        <p class="text-gray-400 text-center text-sm mt-2">QR code will appear here.</p>
+                    </div>
+                </div>
+                <div>
+                    <label for="yourId" class="block text-sm font-medium text-gray-300 mb-1">Your ID (for manual connection)</label>
+                    <input type="text" id="yourId" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-gray-400" readonly>
+                </div>
+            </div>
+            <div class="mt-6">
+                <h2 class="text-lg font-semibold mb-3">Status</h2>
+                <div class="flex items-center gap-3 bg-gray-700 p-3 rounded-lg">
+                    <div id="statusIndicator" class="w-4 h-4 rounded-full bg-red-500 transition-colors duration-500"></div>
+                    <span id="statusText" class="font-medium text-gray-300">Disconnected</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phone Display -->
+        <div class="w-full md:w-2/3 flex items-center justify-center">
+             <div id="phone-container" class="bg-gray-800 p-3 rounded-[40px] shadow-2xl">
+                <div class="relative bg-gray-900 w-[300px] h-[600px] md:w-[350px] md:h-[700px] rounded-[30px] overflow-hidden flex flex-col items-center">
+                    <div class="absolute top-0 left-1/2 -translate-x-1/2 z-10"><div class="phone-notch"></div></div>
+                    <div id="screen" class="w-full h-full flex items-center justify-center cursor-crosshair relative bg-black">
+                        <video id="remoteVideo" class="hidden w-full h-full object-cover" autoplay playsinline muted></video>
+                        <div id="screen-placeholder" class="text-center text-gray-500 p-4 flex flex-col items-center">
+                            <div id="placeholder-default">
+                                <svg class="w-16 h-16 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                                <p class="font-semibold">Connect to a device.</p><p class="text-sm">Then ask host to share screen.</p>
+                            </div>
+                            <div id="placeholder-loading" class="hidden">
+                                 <svg class="w-16 h-16 mx-auto mb-4 spinner" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                <p class="font-semibold">Connecting to stream...</p><p class="text-sm">Please wait.</p>
+                            </div>
+                        </div>
+                        <div id="eventLog" class="absolute bottom-0 left-0 right-0 h-24 bg-black bg-opacity-50 p-2 text-xs text-white font-mono overflow-y-auto opacity-0 hover:opacity-100 transition-opacity"><p>Event Log:</p></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Install Info Modal -->
+    <div id="install-modal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 hidden">
+         <div class="w-full max-w-md text-center bg-gray-800 p-8 rounded-2xl shadow-lg relative">
+            <button id="close-modal-btn" class="absolute top-4 right-4 text-gray-400 hover:text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+            <h1 class="text-2xl font-bold mb-2">Install Host App</h1>
+            <p class="text-gray-400 mb-6">Scan with the phone you want to control.</p>
+            <div class="space-y-4">
+                <div class="w-full p-4 bg-gray-700 rounded-lg flex flex-col items-center justify-center">
+                    <div id="install-qrcode-modal" class="qrcode-container"></div>
+                </div>
+                <div>
+                    <label for="installUrlModal" class="block text-sm font-medium text-gray-300 mb-1">Installation URL</label>
+                    <input type="text" id="installUrlModal" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-gray-400 text-center" readonly value="https://shashank-a-n.github.io/Scan-Phone/">
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // DOM Elements
+        const splashScreen = document.getElementById('splash-screen');
+        const mainApp = document.getElementById('main-app');
+        const continueBtn = document.getElementById('continue-btn');
+        const installModal = document.getElementById('install-modal');
+        const showInstallInfoBtn = document.getElementById('show-install-info-btn');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        
+        const hostUrlInput = document.getElementById('hostUrl');
+        const peerQrcodeEl = document.getElementById('peer-qrcode');
+        const yourIdInput = document.getElementById('yourId');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const screen = document.getElementById('screen');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const screenPlaceholder = document.getElementById('screen-placeholder');
+        const placeholderDefault = document.getElementById('placeholder-default');
+        const placeholderLoading = document.getElementById('placeholder-loading');
+        const eventLog = document.getElementById('eventLog');
+        const peerQrcodeContainerEl = document.getElementById('peer-qrcode-container');
+        
+        // State
+        let peer = null;
+        let dataConnection = null;
+        let mediaConnection = null;
+        let peerQrCode = null;
+        let heartbeatInterval = null;
+        let heartbeatTimeout = null;
+        
+        const INSTALL_URL = "https://shashank-a-n.github.io/Scan-Phone/";
+
+        // --- Main Logic ---
+
+        function logEvent(message) { 
+            const timestamp = new Date().toLocaleTimeString(); 
+            const logEntry = document.createElement('p'); 
+            logEntry.innerHTML = `<span class="text-gray-400">${timestamp}:</span> ${message}`; 
+            eventLog.prepend(logEntry); 
+        }
+        
+        function generatePeerQrCode(id) { 
+            const hostUrl = hostUrlInput.value.trim(); 
+            if (!hostUrl || !id) { 
+                peerQrcodeEl.innerHTML = ''; 
+                return; 
+            } 
+            const connectUrl = `${hostUrl}?controller_id=${id}`; 
+            peerQrcodeEl.innerHTML = ''; 
+            if (peerQrCode) { 
+                peerQrCode.makeCode(connectUrl); 
+            } else { 
+                peerQrCode = new QRCode(peerQrcodeEl, { text: connectUrl, width: 160, height: 160, colorDark : "#ffffff", colorLight : "#4a5568" }); 
+            } 
+            logEvent(`Peer QR Code generated.`); 
+        }
+        
+        function setPlaceholderState(state) {
+             placeholderDefault.classList.add('hidden');
+             placeholderLoading.classList.add('hidden');
+             screenPlaceholder.classList.remove('hidden');
+             if (state === 'loading') { placeholderLoading.classList.remove('hidden'); } 
+             else if (state === 'default') { placeholderDefault.classList.remove('hidden'); } 
+             else { screenPlaceholder.classList.add('hidden'); }
+        }
+
+        function updateConnectionStatus(connected, peerId = '', unstable = false) {
+            if (unstable) { 
+                statusText.textContent = `Connected to ${peerId} (Unstable)`; 
+                statusIndicator.classList.add('bg-yellow-500'); 
+                return; 
+            }
+            statusIndicator.classList.remove('bg-yellow-500'); 
+            if (connected) { 
+                statusIndicator.classList.replace('bg-red-500', 'bg-green-500'); 
+                statusText.textContent = `Connected to ${peerId}`; 
+                placeholderDefault.querySelector('p').textContent = 'Awaiting screen share...'; 
+            } 
+            else {
+                statusIndicator.classList.replace('bg-green-500', 'bg-red-500');
+                statusText.textContent = 'Disconnected';
+                remoteVideo.srcObject = null;
+                remoteVideo.classList.add('hidden');
+                setPlaceholderState('default');
+                placeholderDefault.querySelector('p').textContent = 'Connect to a device.';
+                if(dataConnection) dataConnection.close();
+                if(mediaConnection) mediaConnection.close();
+                clearInterval(heartbeatInterval);
+                clearTimeout(heartbeatTimeout);
+                dataConnection = null;
+                mediaConnection = null;
+            }
+        }
+
+        function initializePeer() {
+            if (peer) { peer.destroy(); }
+            const peerConfig = {
+                config: { 'iceServers': [ { 'urls': 'stun:stun.l.google.com:19302' }, { 'urls': 'stun:stun1.l.google.com:19302' } ] }
+            };
+            peer = new Peer(peerConfig);
+            peer.on('open', (id) => { 
+                logEvent(`Controller ID: ${id}`); 
+                yourIdInput.value = id; 
+                peerQrcodeContainerEl.classList.remove('loading'); 
+                generatePeerQrCode(id); 
+                if (statusText.textContent === 'Reconnecting...') { updateConnectionStatus(false); } 
+            });
+            peer.on('connection', (conn) => { 
+                logEvent(`Incoming data connection from ${conn.peer}`); 
+                if (dataConnection && dataConnection.open) { 
+                    logEvent(`Already connected. Rejecting.`); 
+                    conn.close(); 
+                    return; 
+                } 
+                setupDataConnection(conn); 
+            });
+            peer.on('call', (call) => {
+                logEvent(`======= INCOMING CALL from ${call.peer} =======`);
+                mediaConnection = call;
+                setPlaceholderState('loading');
+                call.on('stream', (remoteStream) => { 
+                    logEvent('======= STREAM RECEIVED ======='); 
+                    setPlaceholderState('hidden'); 
+                    remoteVideo.classList.remove('hidden'); 
+                    remoteVideo.srcObject = remoteStream; 
+                    logEvent('Video source has been set.'); 
+                });
+                call.on('error', (err) => { 
+                    logEvent(`======= MEDIA CALL ERROR: ${err.message} =======`); 
+                    console.error("Media Call Error:", err); 
+                    setPlaceholderState('default'); 
+                });
+                call.on('close', () => { 
+                    logEvent('======= MEDIA CALL CLOSED ======='); 
+                    remoteVideo.classList.add('hidden'); 
+                    setPlaceholderState('default'); 
+                    placeholderDefault.querySelector('p').textContent = 'Host stopped sharing.'; 
+                    mediaConnection = null; 
+                });
+                logEvent('Answering call...');
+                call.answer();
+                logEvent('Call answered.');
+            });
+            peer.on('disconnected', () => { 
+                logEvent('Lost server connection. Attempting to reconnect...'); 
+                statusText.textContent = 'Reconnecting...'; 
+                statusIndicator.classList.remove('bg-green-500', 'bg-red-500'); 
+                statusIndicator.classList.add('bg-yellow-500'); 
+            });
+            peer.on('close', () => { logEvent('Peer connection closed permanently.'); updateConnectionStatus(false); });
+            peer.on('error', (err) => { 
+                console.error('PeerJS Error:', err); 
+                logEvent(`Error: ${err.type} - ${err.message}`); 
+                updateConnectionStatus(false); 
+            });
+        }
+        
+        function setupDataConnection(conn) {
+             dataConnection = conn;
+             dataConnection.on('open', () => { 
+                logEvent(`Data connection established.`); 
+                updateConnectionStatus(true, dataConnection.peer); 
+                heartbeatInterval = setInterval(() => {
+                    try {
+                        if (dataConnection && dataConnection.open) {
+                             dataConnection.send({ type: 'ping' });
+                             heartbeatTimeout = setTimeout(() => { 
+                                 logEvent('Heartbeat timeout. Connection may be unstable.'); 
+                                 updateConnectionStatus(true, dataConnection.peer, true); 
+                             }, 2000);
+                        } else { clearInterval(heartbeatInterval); }
+                    } catch (e) { logEvent('Failed to send ping. Connection lost.'); updateConnectionStatus(false); }
+                }, 5000);
+             });
+             dataConnection.on('data', (data) => { 
+                if (data.type === 'pong') { 
+                    clearTimeout(heartbeatTimeout); 
+                    if (statusText.textContent.includes('Unstable')) { 
+                        updateConnectionStatus(true, dataConnection.peer); 
+                    } 
+                    return; 
+                }
+                logEvent(`Data received: ${JSON.stringify(data)}`); 
+            });
+             dataConnection.on('close', () => { logEvent(`Data connection closed.`); updateConnectionStatus(false); });
+             dataConnection.on('error', (err) => { console.error('DataConnection Error:', err); logEvent(`Connection error: ${err.message}`); });
+        }
+
+        function handleScreenInteraction(event) {
+            if (!dataConnection || !dataConnection.open) return;
+            const rect = screen.getBoundingClientRect();
+            const x = event.clientX - rect.left; 
+            const y = event.clientY - rect.top;
+            const normalizedX = x / rect.width; 
+            const normalizedY = y / rect.height;
+            const payload = { type: 'click', x: normalizedX, y: normalizedY };
+            dataConnection.send(payload);
+            logEvent(`Sent click: (${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)})`);
+        }
+
+        function prefillHostUrl() {
+            try {
+                const currentUrl = new URL(window.location.href);
+                const basePath = currentUrl.href.substring(0, currentUrl.href.lastIndexOf('/') + 1);
+                const hostUrl = `${basePath}host.html`;
+                if (!hostUrlInput.value) { 
+                    hostUrlInput.value = hostUrl; 
+                    logEvent(`Auto-detected host URL.`); 
+                }
+            } catch (e) { 
+                logEvent("Could not auto-detect host URL."); 
+                console.error("URL prefill error:", e); 
+            }
+        }
+        
+        // --- Event Listeners ---
+        
+        continueBtn.addEventListener('click', () => {
+            splashScreen.classList.add('hidden');
+            mainApp.classList.remove('hidden');
+            mainApp.classList.add('flex', 'flex-col'); // Make it visible and flex
+        });
+        
+        showInstallInfoBtn.addEventListener('click', () => installModal.classList.remove('hidden'));
+        closeModalBtn.addEventListener('click', () => installModal.classList.add('hidden'));
+
+        hostUrlInput.addEventListener('input', () => generatePeerQrCode(yourIdInput.value));
+        peerQrcodeEl.addEventListener('click', () => generatePeerQrCode(yourIdInput.value));
+        screen.addEventListener('mousedown', handleScreenInteraction);
+        
+        window.addEventListener('load', () => { 
+            // Generate the static install QR codes
+            new QRCode(document.getElementById('install-qrcode'), { text: INSTALL_URL, width: 192, height: 192 });
+            new QRCode(document.getElementById('install-qrcode-modal'), { text: INSTALL_URL, width: 192, height: 192 });
+            
+            // Prepare the main app in the background
+            prefillHostUrl(); 
+            initializePeer(); 
+            logEvent('Controller ready.'); 
+        });
+    </script>
+</body>
+</html>
